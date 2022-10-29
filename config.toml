@@ -1,0 +1,4 @@
+ImportPath = "/Users/jason/Projects/qihoo/coupon_mail/third_party"
+LoadFolder = "api"
+ProxyPort = 7000
+ManagerPort = 7001

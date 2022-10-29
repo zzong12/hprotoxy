@@ -1,0 +1,9 @@
+# ide
+.idea
+*.iml
+.vscode
+__debug_bin
+
+# run
+*.exe
+hprotoxy*
