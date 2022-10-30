@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>My App</title>
+    <style>
+        #meta-table {
+            border-collapse: collapse;
+            border-style: solid;
+        }
+        #meta-table td {
+            border-style: solid;
+            padding: 5px;
+            height: auto;
+            word-wrap: inherit;
+        }
+        #meta-table header {
+            background-color: #eee;
+            font: bold;
+        }
+        #ctl-box {
+            height: 20px;
+            border: solid;
+            padding: 5px;
+        }
+    </style>
+  </head>
+  <body>
+    <div id="ctl-box">
+        <form id="ctl-form" action="/do/upload" enctype="multipart/form-data" method="post">
+            Place your file here:
+            <input type="file" multiple="multiple" id="ctl-file" name="pbfile"/>
+            <input type="submit" value="Upload" />
+        </form>
+        <!-- <button id="ctl-clear" onclick="doReload()">Refresh</button> -->
+    </div>
+    <div id="meta-box">
+        <table id="meta-table">
+            <header>
+                <tr>
+                    <td>Filename</td>
+                    <td>MessageName</td>
+                    <td>MessageType</td>
+                    <td>Example</td>
+                </tr>
+            </header>
+        </table>
+    </div>
+    
+  </body>
+  <script>
+    var Ajax = {
+        get: function (url, fn) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.setRequestHeader('Content-Type','application/x-www-form-urlencode;charset=utf-8');
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    fn.call(this, xhr.responseText)
+                }
+            };
+            xhr.send()
+        },
+        post: function (url, data, fn) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", url, true);
+            xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState == 4 && (xhr.status == 200 || xhr.status == 304)) {
+                    fn.call(this, xhr.responseText);
+                }
+            };
+            xhr.send(data);
+        }
+    }
+ 
+
+    Ajax.get('/st/meta', function (data) {
+        let metaData = JSON.parse(data);
+        let table = "<tbody>"
+        metaData.forEach(function (item) {
+            table += "<tr>"
+            table += "<td>" + item.fileName + "</td>"
+            table += "<td>" + item.msgName + "</td>"
+            table += "<td>" + item.msgType + "</td>"
+            table += "<td>" + item.example + "</td>"
+            table += "</tr>"
+        })
+        table += "</tbody>"
+        document.getElementById('meta-table').innerHTML += table
+        console.log(metaData)
+    })
+
+    function doReload() {
+        alert("reload")
+    }
+ 
+   
+  </script>
+</html>

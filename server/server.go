@@ -245,6 +245,53 @@ func (s *Server) apiReload(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
+func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
+	res := make(map[string]string)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		res["status"] = "error"
+		res["error"] = err.Error()
+	} else {
+		for _, fheaders := range r.MultipartForm.File {
+			for _, hdr := range fheaders {
+				if !strings.HasSuffix(hdr.Filename, ".proto") {
+					res["status"] = "error"
+					if res["error"] == "" {
+						res["error"] = "only .proto files are allowed, bug got "
+					}
+					res["error"] += fmt.Sprintf(" %s", hdr.Filename)
+					continue
+				}
+				file, err := hdr.Open()
+				if err != nil {
+					res["status"] = "error"
+					res["error"] = err.Error()
+					break
+				}
+				if err := s.Loader.AddFile(hdr.Filename, file); err != nil {
+					res["status"] = "error"
+					res["error"] = err.Error()
+					break
+				}
+			}
+		}
+		if _, ok := res["status"]; !ok {
+			res["status"] = "ok"
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) indexPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	p, err := ioutil.ReadFile("./web/index.html")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.Write(p)
+}
+
 // Run starts the proxy server.
 func (s *Server) Run() {
 	s.Loader.Start()
@@ -270,7 +317,8 @@ func (s *Server) Run() {
 		managerSvrMux := http.NewServeMux()
 		managerSvrMux.HandleFunc("/st/meta", s.apiMeta)
 		managerSvrMux.HandleFunc("/do/reload", s.apiReload)
-		// managerSvrMux.HandleFunc("/do/upload", s.apiUpload)
+		managerSvrMux.HandleFunc("/do/upload", s.apiUpload)
+		managerSvrMux.HandleFunc("/", s.indexPage)
 		managerSvr := http.Server{
 			Addr:    fmt.Sprintf(":%d", s.ManagerPort),
 			Handler: managerSvrMux,

@@ -2,6 +2,9 @@ package server
 
 import (
 	"fmt"
+	"io/ioutil"
+	"mime/multipart"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -102,4 +105,17 @@ func (p *ProtoDescriptorLoader) Load() error {
 
 	log.Log.Info("loaded proto", " ,files=", pfs, " ,msgs=", keys)
 	return nil
+}
+
+func (p *ProtoDescriptorLoader) AddFile(fileName string, file multipart.File) error {
+	fileContext, _ := ioutil.ReadAll(file)
+	realFilePath := path.Join(p.importPath, p.loadFolder, fileName)
+	if err := os.Remove(realFilePath); err == nil {
+		log.Log.Info("remove old file", "file=", realFilePath)
+	}
+	err := ioutil.WriteFile(path.Join(p.importPath, p.loadFolder, fileName), fileContext, 0644)
+	if err != nil {
+		return err
+	}
+	return p.Load()
 }
