@@ -20,6 +20,7 @@ type ProtoDescriptorLoader struct {
 	loadFolder     string
 	lock           *sync.RWMutex
 	lastLoadTIme   time.Time
+	reloadInterval uint16
 	parser         *protoparse.Parser
 	fileDesc       []*desc.FileDescriptor
 	enumDescMap    map[string]*desc.EnumDescriptor
@@ -49,18 +50,21 @@ func (p *ProtoDescriptorLoader) Start() error {
 	if err != nil {
 		return err
 	}
-	go func() {
-		t := time.NewTimer(300 * time.Second) // 5 min
-		for {
-			select {
-			case <-t.C:
-				err := p.Load()
-				if err != nil {
-					log.Log.WithError(err).Error("error loading proto files")
+	if p.reloadInterval > 0 {
+		go func() {
+			for {
+				t := time.NewTimer(time.Duration(p.reloadInterval) * time.Minute) // minute
+				select {
+				case <-t.C:
+					err := p.Load()
+					if err != nil {
+						log.Log.WithError(err).Error("error loading proto files")
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
+
 	return nil
 }
 

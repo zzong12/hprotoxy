@@ -8,4 +8,5 @@ func init() {
 	Log.Formatter = &logrus.TextFormatter{
 		DisableQuote: true,
 	}
+	Log.SetReportCaller(true)
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/rc4"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -24,16 +25,19 @@ import (
 )
 
 const (
-	ContextReqMsg = "reqmsg"
-	ContextResMsg = "resmsg"
+	ContextTypeKeyReqMsg  = "reqmsg"
+	ContextTypeKeyResMsg  = "resmsg"
+	ContextTypeKeyRc4Key  = "rc4key"
+	ContextTypeKeyRc4Type = "rc4type"
 )
 
 type (
 	Config struct {
-		ImportPath  string
-		LoadFolder  string
-		ProxyPort   uint16
-		ManagerPort uint16
+		ImportPath     string
+		LoadFolder     string
+		ReloadInterval uint16
+		ProxyPort      uint16
+		ManagerPort    uint16
 	}
 
 	Server struct {
@@ -45,6 +49,8 @@ type (
 	protoTypes struct {
 		reqMsg  string
 		respMsg string
+		rc4Key  string
+		rc4Type string // 1:both, 2:req, 3:resp
 	}
 
 	MetaItem struct {
@@ -66,6 +72,7 @@ func NewServer(cfg Config) *Server {
 		fileDesc:       make([]*desc.FileDescriptor, 0),
 		enumDescMap:    make(map[string]*desc.EnumDescriptor),
 		messageDescMap: make(map[string]*desc.MessageDescriptor),
+		reloadInterval: cfg.ReloadInterval,
 	}
 	return &Server{
 		ProxyPort:   cfg.ProxyPort,
@@ -74,7 +81,7 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
-func parseMessageTypes(r *http.Request) (ptypes protoTypes, err error) {
+func parseMessageTypes(r *http.Request) (ptypes *protoTypes, err error) {
 	ctype := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ctype, "application/json") {
 		err = fmt.Errorf("Content-Type is not application/json")
@@ -84,20 +91,33 @@ func parseMessageTypes(r *http.Request) (ptypes protoTypes, err error) {
 	if err != nil {
 		return ptypes, err
 	}
-	return protoTypes{
-		reqMsg:  params[ContextReqMsg],
-		respMsg: params[ContextResMsg],
+	return &protoTypes{
+		reqMsg:  params[ContextTypeKeyReqMsg],
+		respMsg: params[ContextTypeKeyResMsg],
+		rc4Key:  params[ContextTypeKeyRc4Key],
+		rc4Type: params[ContextTypeKeyRc4Type],
 	}, nil
 }
 
-func writeErrorResponse(w http.ResponseWriter, status int) {
+func writeErrorResponse(w http.ResponseWriter, status int, err error) {
 	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("HProtoxy was unable to successfully proxy the request. See logs for details."))
+	w.Write([]byte("HProtoxy was unable to successfully proxy the request. See logs for details. error: " + err.Error()))
 }
 
-func replaceReqBody(r *http.Request, msgDescriptor *desc.MessageDescriptor) error {
+func rc4Crypt(key string, src []byte) ([]byte, error) {
+	cipher, err := rc4.NewCipher([]byte(key))
+	if err != nil {
+		return nil, err
+	}
+	encrypt := make([]byte, len(src))
+	cipher.XORKeyStream(encrypt, src)
+	return encrypt, nil
+}
+
+func replaceReqBody(r *http.Request, msgDescriptor *desc.MessageDescriptor, tp *protoTypes) error {
 	msg := dynamic.NewMessage(msgDescriptor)
+
 	err := jsonpb.Unmarshal(r.Body, msg)
 	if err != nil {
 		log.Log.WithError(err).Error("unable to unmarshal into json")
@@ -108,6 +128,14 @@ func replaceReqBody(r *http.Request, msgDescriptor *desc.MessageDescriptor) erro
 	if err != nil {
 		log.Log.WithError(err).Error("unable to marshal message")
 		return fmt.Errorf("Unable to marshal message: %v", err)
+	}
+
+	if len(tp.rc4Key) > 0 && (tp.rc4Type == "1" || tp.rc4Type == "2") {
+		b, err := rc4Crypt(tp.rc4Key, reqBytes)
+		if err != nil {
+			return err
+		}
+		reqBytes = b
 	}
 
 	// replace request body with protobuf bytes
@@ -134,21 +162,21 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 	msgTypes, err := parseMessageTypes(r)
 	if err != nil {
 		log.Log.WithError(err).Error("error parsing message types")
-		writeErrorResponse(w, http.StatusBadRequest)
+		writeErrorResponse(w, http.StatusBadRequest, err)
 		return
 	}
 
 	reqMsgDesc, respMsgDesc, err := s.findMessageDescriptors(msgTypes.reqMsg, msgTypes.respMsg)
 	if err != nil {
 		log.Log.WithError(err).Error("error finding message descriptors")
-		writeErrorResponse(w, http.StatusBadRequest)
+		writeErrorResponse(w, http.StatusBadRequest, err)
 		return
 	}
 
 	if reqMsgDesc != nil {
-		if err = replaceReqBody(r, reqMsgDesc); err != nil {
+		if err = replaceReqBody(r, reqMsgDesc, msgTypes); err != nil {
 			log.Log.WithError(err).Error("error converting JSON body to proto")
-			writeErrorResponse(w, http.StatusBadRequest)
+			writeErrorResponse(w, http.StatusBadRequest, err)
 			return
 		}
 	}
@@ -164,6 +192,15 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 		err = r.Body.Close()
 		if err != nil {
 			return fmt.Errorf("Error closing body: %v", err)
+		}
+
+		// try to decrypt
+		if len(msgTypes.rc4Key) > 0 && (msgTypes.rc4Type == "1" || msgTypes.rc4Type == "3") {
+			b, err := rc4Crypt(msgTypes.rc4Key, body)
+			if err != nil {
+				return err
+			}
+			body = b
 		}
 
 		// Try all possible responses until something works
@@ -191,7 +228,7 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	errorHandler := func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Log.WithError(err).Error("unable to proxy response from server")
-		writeErrorResponse(w, http.StatusBadRequest)
+		writeErrorResponse(w, http.StatusBadRequest, err)
 	}
 
 	proxy := &httputil.ReverseProxy{
@@ -282,14 +319,13 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
-func (s *Server) indexPage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) webPages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	p, err := ioutil.ReadFile("./web/index.html")
-	if err != nil {
-		w.Write([]byte(err.Error()))
-		return
+	if html, ok := WebPages[r.URL.Path]; ok {
+		w.Write([]byte(html))
+	} else {
+		w.WriteHeader(http.StatusNotFound)
 	}
-	w.Write(p)
 }
 
 // Run starts the proxy server.
@@ -318,7 +354,7 @@ func (s *Server) Run() {
 		managerSvrMux.HandleFunc("/st/meta", s.apiMeta)
 		managerSvrMux.HandleFunc("/do/reload", s.apiReload)
 		managerSvrMux.HandleFunc("/do/upload", s.apiUpload)
-		managerSvrMux.HandleFunc("/", s.indexPage)
+		managerSvrMux.HandleFunc("/", s.webPages)
 		managerSvr := http.Server{
 			Addr:    fmt.Sprintf(":%d", s.ManagerPort),
 			Handler: managerSvrMux,
