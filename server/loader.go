@@ -123,3 +123,29 @@ func (p *ProtoDescriptorLoader) AddFile(fileName string, file multipart.File) er
 	}
 	return p.Load()
 }
+
+func (p *ProtoDescriptorLoader) delFile(fileName string) error {
+	if !strings.HasPrefix(fileName, p.loadFolder) {
+		return fmt.Errorf("invalid file name")
+	}
+	realFilePath := path.Join(p.importPath, fileName)
+	if err := os.Remove(realFilePath); err != nil {
+		return err
+	}
+	return p.Load()
+}
+
+func (p *ProtoDescriptorLoader) readFile(fileName string) (string, error) {
+	if !strings.HasPrefix(fileName, p.loadFolder) {
+		return "", fmt.Errorf("invalid file name")
+	}
+	realFilePath := path.Join(p.importPath, fileName)
+	file, err := os.Open(realFilePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	fileContext, _ := ioutil.ReadAll(file)
+	return string(fileContext), nil
+}

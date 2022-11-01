@@ -6,6 +6,7 @@ for json<->protobuf convertion
 ```toml
 ImportPath = ""     // import path of pb file, default is "./"
 LoadFolder = "api"  // sub folder of api, default is api
+ReloadInterval = 0  // reload interval, default is 0
 ProxyPort = 7000    // proxy port, default is 7000
 ManagerPort = 7001  // manager port, default is 7001
 ```
@@ -48,8 +49,12 @@ curl --location --request POST 'http://test.comp.360os.com/engine/v1/get_cfg' \
 > default business port is 7001
 1. meta data
 http://{MANAGER_SERVER_ADDR}:7001/st/meta
-2. reload
+2. reload†
 http://{MANAGER_SERVER_ADDR}:7001/do/reload
 2. upload TODO
 http://{MANAGER_SERVER_ADDR}:7001/do/upload
 filed: file=xxxx.proto
+
+## Reference Project
+* https://github.com/camgraff/protoxy
+* https://github.com/jhump/protoreflect

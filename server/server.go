@@ -319,8 +319,56 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
+func (s *Server) apiDelete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	res := make(map[string]string)
+	if r.Method != "DELETE" {
+		res["status"] = "error"
+		res["error"] = "only DELETE method is allowed"
+	} else {
+		fileName := r.URL.Query().Get("file")
+		err := s.Loader.delFile(fileName)
+		if err != nil {
+			res["status"] = "error"
+			res["error"] = err.Error()
+		} else {
+			res["status"] = "ok"
+		}
+	}
+	json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) apiRead(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	res := make(map[string]string)
+	if r.Method != "GET" {
+		res["status"] = "error"
+		res["error"] = "only GET method is allowed"
+	} else {
+		fileName := r.URL.Query().Get("file")
+		file, err := s.Loader.readFile(fileName)
+		if err != nil {
+			res["status"] = "error"
+			res["error"] = err.Error()
+		} else {
+			res["status"] = "ok"
+			res["file"] = file
+		}
+	}
+	json.NewEncoder(w).Encode(res)
+}
+
 func (s *Server) webPages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
+
+	// for test html page
+	// if html, err := ioutil.ReadFile(r.URL.Path[1:]); err != nil {
+	// 	w.WriteHeader(http.StatusNotFound)
+	// 	return
+	// } else {
+	// 	w.Write(html)
+	// }
+
 	if html, ok := WebPages[r.URL.Path]; ok {
 		w.Write([]byte(html))
 	} else {
@@ -354,6 +402,8 @@ func (s *Server) Run() {
 		managerSvrMux.HandleFunc("/st/meta", s.apiMeta)
 		managerSvrMux.HandleFunc("/do/reload", s.apiReload)
 		managerSvrMux.HandleFunc("/do/upload", s.apiUpload)
+		managerSvrMux.HandleFunc("/do/delete", s.apiDelete)
+		managerSvrMux.HandleFunc("/do/read", s.apiRead)
 		managerSvrMux.HandleFunc("/", s.webPages)
 		managerSvr := http.Server{
 			Addr:    fmt.Sprintf(":%d", s.ManagerPort),
