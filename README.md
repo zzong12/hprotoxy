@@ -22,28 +22,6 @@ ManagerPort = 7001  // manager port, default is 7001
 * resmsg: response protobuf message
 * rc4key: rc4 key for encrypt/decrypt
 * *4Type: rc4 type, 1: encrypt all: 2: encrypt request, 3: encrypt response
-```shell
-curl --location --request POST 'http://test.comp.360os.com/engine/v1/get_cfg' \
---header 'Content-Type: application/json;reqmsg=kratos_os_layout.apidata.Request;resmsg=kratos_os_layout.apidata.Response;rc4key=8229225a284731d9bc273bf06ca8b081;rc4Type=2' \
---data '{
-    "open_app": 1,
-    "exist_apps": [],
-    "device": {
-        "device_id": [
-            {
-                "type": 0,
-                "id": "1"
-            }
-        ],
-        "os": 1,
-        "os_version": "",
-        "solution": "",
-        "brand": "",
-        "model": "",
-        "net_type": 0
-    }
-}'
-```
 
 ### 4. Api list
 > default business port is 7001
