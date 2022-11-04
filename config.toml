@@ -1,4 +1,4 @@
-ImportPath = "/xxx/xxx/pb_dir"
+ImportPath = "/Users/jason/Projects/qihoo/coupon_mail/third_party"
 LoadFolder = "api"
 ReloadInterval = 0
 ProxyPort = 7000

@@ -92,12 +92,17 @@ const (
 			e.preventDefault();
 			Ajax.get('/do/reload', function (data) {
 				alert(data);
+				if (rs["status"] != "ok") {
+					window.location.reload();
+				}
+			
 			})
 		};
 		function doDelete(file) {
 			Ajax.delete('/do/delete?file=' + file, function (data) {
 				if (confirm('Are you sure to delete [' + file + ']?') == true) {
 					alert(data);
+					window.location.reload();
 				}
 			})
 		};
@@ -106,6 +111,7 @@ const (
 				var rs = JSON.parse(data);
 				if (rs["status"] != "ok") {
 					alert(data);
+					window.location.reload();
 					return
 				}
 				alert(rs["file"]);

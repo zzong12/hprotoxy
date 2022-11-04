@@ -2,11 +2,9 @@ package server
 
 import (
 	"bytes"
-	"crypto/rc4"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"mime"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -15,20 +13,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/zzong12/hprotoxy/codec"
+	"github.com/zzong12/hprotoxy/loader"
 	"github.com/zzong12/hprotoxy/log"
 
 	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
-	"github.com/jhump/protoreflect/desc"
-	"github.com/jhump/protoreflect/desc/protoparse"
 	"github.com/jhump/protoreflect/dynamic"
 )
 
 const (
-	ContextTypeKeyReqMsg  = "reqmsg"
-	ContextTypeKeyResMsg  = "resmsg"
-	ContextTypeKeyRc4Key  = "rc4key"
-	ContextTypeKeyRc4Type = "rc4type"
+	HEADER_REQ_CODEC = "ReqCodec"
+	HEADER_RES_CODEC = "ResCodec"
 )
 
 type (
@@ -43,14 +38,6 @@ type (
 	Server struct {
 		ProxyPort   uint16
 		ManagerPort uint16
-		Loader      *ProtoDescriptorLoader
-	}
-
-	protoTypes struct {
-		reqMsg  string
-		respMsg string
-		rc4Key  string
-		rc4Type string // 1:both, 2:req, 3:resp
 	}
 
 	MetaItem struct {
@@ -62,129 +49,80 @@ type (
 )
 
 func NewServer(cfg Config) *Server {
-	loader := &ProtoDescriptorLoader{
-		importPath: cfg.ImportPath,
-		loadFolder: cfg.LoadFolder,
-		parser: &protoparse.Parser{
-			ImportPaths: []string{cfg.ImportPath},
-		},
-		lock:           &sync.RWMutex{},
-		fileDesc:       make([]*desc.FileDescriptor, 0),
-		enumDescMap:    make(map[string]*desc.EnumDescriptor),
-		messageDescMap: make(map[string]*desc.MessageDescriptor),
-		reloadInterval: cfg.ReloadInterval,
-	}
+	loader.InitLoader(cfg.ImportPath, cfg.LoadFolder, cfg.ReloadInterval)
 	return &Server{
 		ProxyPort:   cfg.ProxyPort,
 		ManagerPort: cfg.ManagerPort,
-		Loader:      loader,
 	}
-}
-
-func parseMessageTypes(r *http.Request) (ptypes *protoTypes, err error) {
-	ctype := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(ctype, "application/json") {
-		err = fmt.Errorf("Content-Type is not application/json")
-		return
-	}
-	_, params, err := mime.ParseMediaType(ctype)
-	if err != nil {
-		return ptypes, err
-	}
-	return &protoTypes{
-		reqMsg:  params[ContextTypeKeyReqMsg],
-		respMsg: params[ContextTypeKeyResMsg],
-		rc4Key:  params[ContextTypeKeyRc4Key],
-		rc4Type: params[ContextTypeKeyRc4Type],
-	}, nil
 }
 
 func writeErrorResponse(w http.ResponseWriter, status int, err error) {
 	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("HProtoxy was unable to successfully proxy the request. See logs for details. error: " + err.Error()))
+	w.Write([]byte("HProtoxy was unable to successfully proxy the request. See logs for details.\nerror: " + err.Error()))
 }
 
-func rc4Crypt(key string, src []byte) ([]byte, error) {
-	cipher, err := rc4.NewCipher([]byte(key))
+func replaceReqBody(r *http.Request, cs codec.Codecs) error {
+	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	encrypt := make([]byte, len(src))
-	cipher.XORKeyStream(encrypt, src)
-	return encrypt, nil
-}
+	r.Body.Close()
 
-func replaceReqBody(r *http.Request, msgDescriptor *desc.MessageDescriptor, tp *protoTypes) error {
-	msg := dynamic.NewMessage(msgDescriptor)
-
-	err := jsonpb.Unmarshal(r.Body, msg)
+	data, err := cs.EncodeAll(body)
 	if err != nil {
-		log.Log.WithError(err).Error("unable to unmarshal into json")
-		return fmt.Errorf("Unable to unmarshal into json: %v", err)
+		return err
 	}
 
-	reqBytes, err := proto.Marshal(msg)
-	if err != nil {
-		log.Log.WithError(err).Error("unable to marshal message")
-		return fmt.Errorf("Unable to marshal message: %v", err)
-	}
-
-	if len(tp.rc4Key) > 0 && (tp.rc4Type == "1" || tp.rc4Type == "2") {
-		b, err := rc4Crypt(tp.rc4Key, reqBytes)
-		if err != nil {
-			return err
-		}
-		reqBytes = b
-	}
-
-	// replace request body with protobuf bytes
-	buffer := bytes.NewBuffer(reqBytes)
+	buffer := bytes.NewBuffer(data)
 	r.Body = ioutil.NopCloser(buffer)
 	r.ContentLength = int64(buffer.Len())
-
 	return nil
 }
 
-func (s *Server) findMessageDescriptors(reqMsg string, respMsg string) (reqMsgDesc *desc.MessageDescriptor, respMsgDescs *desc.MessageDescriptor, err error) {
-	reqMsgDesc, err = s.Loader.GetMessageDescriptor(reqMsg)
-	if err != nil {
-		return
+func (s *Server) paresrCodecs(r *http.Request) (codec.Codecs, codec.Codecs, error) {
+	reqCodec := r.Header.Get(HEADER_REQ_CODEC)
+	if reqCodec == "" {
+		return nil, nil, fmt.Errorf("request code is empty")
 	}
-	respMsgDescs, err = s.Loader.GetMessageDescriptor(respMsg)
+
+	reqCodecs, err := codec.ParserCodes(reqCodec)
 	if err != nil {
-		return
+		return nil, nil, fmt.Errorf("request code is invalid: %v", err)
 	}
-	return
+	var resCodecs codec.Codecs
+	resCode := r.Header.Get(HEADER_RES_CODEC)
+	if resCode == "" { // default use request code as response code
+		resCodecs = reqCodecs.Inverted()
+	} else {
+		resCodecs, err = codec.ParserCodes(resCode)
+		if err != nil {
+			return nil, nil, fmt.Errorf("response code is invalid: %v", err)
+		}
+	}
+	return reqCodecs, resCodecs, nil
+
 }
 
 func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
-	msgTypes, err := parseMessageTypes(r)
+	reqCodes, resCodes, err := s.paresrCodecs(r)
 	if err != nil {
-		log.Log.WithError(err).Error("error parsing message types")
+		log.Log.WithError(err).Error("unable to parse codes")
 		writeErrorResponse(w, http.StatusBadRequest, err)
 		return
 	}
 
-	reqMsgDesc, respMsgDesc, err := s.findMessageDescriptors(msgTypes.reqMsg, msgTypes.respMsg)
+	err = replaceReqBody(r, reqCodes)
 	if err != nil {
-		log.Log.WithError(err).Error("error finding message descriptors")
+		log.Log.WithError(err).Error("error converting JSON body to proto")
 		writeErrorResponse(w, http.StatusBadRequest, err)
 		return
-	}
-
-	if reqMsgDesc != nil {
-		if err = replaceReqBody(r, reqMsgDesc, msgTypes); err != nil {
-			log.Log.WithError(err).Error("error converting JSON body to proto")
-			writeErrorResponse(w, http.StatusBadRequest, err)
-			return
-		}
 	}
 
 	// Override content-type to remove params
-	r.Header.Set("Content-Type", "application/x-protobuf")
+	// r.Header.Set("Content-Type", "application/x-protobuf")
 
-	modifyResp := func(r *http.Response) error {
+	modifyResponse := func(r *http.Response) error {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			return fmt.Errorf("Failed to read response body: %v", err)
@@ -194,31 +132,12 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("Error closing body: %v", err)
 		}
 
-		// try to decrypt
-		if len(msgTypes.rc4Key) > 0 && (msgTypes.rc4Type == "1" || msgTypes.rc4Type == "3") {
-			b, err := rc4Crypt(msgTypes.rc4Key, body)
-			if err != nil {
-				return err
-			}
-			body = b
+		data, err := resCodes.DecodeAll(body)
+		if err != nil {
+			return fmt.Errorf("Failed to decode response body: %v", err)
 		}
 
-		// Try all possible responses until something works
-		msg := dynamic.NewMessage(respMsgDesc)
-		err = proto.Unmarshal(body, msg)
-		if err != nil {
-			log.Log.WithError(err).Error("error unmarshaling response")
-			return err
-		}
-
-		marshaler := jsonpb.Marshaler{
-			EmitDefaults: true,
-		}
-		buf := bytes.NewBuffer(nil)
-		err = marshaler.Marshal(buf, msg)
-		if err != nil {
-			return fmt.Errorf("Failed to marshal response: %v", err)
-		}
+		buf := bytes.NewBuffer(data)
 		r.Body = ioutil.NopCloser(buf)
 		r.ContentLength = int64(buf.Len())
 		r.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
@@ -233,7 +152,7 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director:       func(*http.Request) {},
-		ModifyResponse: modifyResp,
+		ModifyResponse: modifyResponse,
 		ErrorHandler:   errorHandler,
 	}
 
@@ -242,7 +161,7 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiMeta(w http.ResponseWriter, r *http.Request) {
 	var res []*MetaItem
-	for _, fd := range s.Loader.fileDesc {
+	for _, fd := range loader.GetLocalLoader().ListFileDescriptor() {
 		for _, v := range fd.GetMessageTypes() {
 			zeroV, _ := dynamic.NewMessage(v).MarshalJSONPB(&jsonpb.Marshaler{
 				OrigName:     true,
@@ -272,7 +191,7 @@ func (s *Server) apiMeta(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiReload(w http.ResponseWriter, r *http.Request) {
 	res := make(map[string]string)
-	if err := s.Loader.Load(); err != nil {
+	if err := loader.GetLocalLoader().Load(); err != nil {
 		res["status"] = "error"
 		res["error"] = err.Error()
 	} else {
@@ -304,7 +223,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 					res["error"] = err.Error()
 					break
 				}
-				if err := s.Loader.AddFile(hdr.Filename, file); err != nil {
+				if err := loader.GetLocalLoader().AddFile(hdr.Filename, file); err != nil {
 					res["status"] = "error"
 					res["error"] = err.Error()
 					break
@@ -327,7 +246,7 @@ func (s *Server) apiDelete(w http.ResponseWriter, r *http.Request) {
 		res["error"] = "only DELETE method is allowed"
 	} else {
 		fileName := r.URL.Query().Get("file")
-		err := s.Loader.delFile(fileName)
+		err := loader.GetLocalLoader().DelFile(fileName)
 		if err != nil {
 			res["status"] = "error"
 			res["error"] = err.Error()
@@ -346,7 +265,7 @@ func (s *Server) apiRead(w http.ResponseWriter, r *http.Request) {
 		res["error"] = "only GET method is allowed"
 	} else {
 		fileName := r.URL.Query().Get("file")
-		file, err := s.Loader.readFile(fileName)
+		file, err := loader.GetLocalLoader().ReadFile(fileName)
 		if err != nil {
 			res["status"] = "error"
 			res["error"] = err.Error()
@@ -378,7 +297,7 @@ func (s *Server) webPages(w http.ResponseWriter, r *http.Request) {
 
 // Run starts the proxy server.
 func (s *Server) Run() {
-	s.Loader.Start()
+	loader.GetLocalLoader().Start()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

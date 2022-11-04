@@ -1,6 +1,16 @@
 # Http proxy server
-for json<->protobuf convertion
+A simple http proxy server for multiple codecs transcoding.
 ## Project Description
+### Support Codec
+| Codec | Function | Format |
+| --- | --- | --- |
+| pb | json <-> pb | pb:{"req":"a.b.Req","res":"a.b.Res"} |
+| rc4 | []byte <-> rc4([]byte) | rc4:{"key":"123"} |
+| aes | []byte <-> aes([]byte) | aes:{"key":"123","iv":"456"} |
+| base64 | []byte <-> base64([]byte) | base64:{} |
+| url | []byte <-> urlEncode([]byte) | url:{} |
+| gzip | []byte <-> gzip([]byte) | gzip:{} |
+
 ## How to use
 ### 1. Configure
 ```toml
@@ -17,43 +27,18 @@ ManagerPort = 7001  // manager port, default is 7001
 ```
 
 ### 3. Use proxy
-**Parameter Description (all parameter was reqired)**
-* reqmsg: requset protobuf message
-* resmsg: response protobuf message
-* rc4key: rc4 key for encrypt/decrypt
-* *4Type: rc4 type, 1: encrypt all: 2: encrypt request, 3: encrypt response
-```shell
-curl --location --request POST 'http://test.comp.360os.com/engine/v1/get_cfg' \
---header 'Content-Type: application/json;reqmsg=kratos_os_layout.apidata.Request;resmsg=kratos_os_layout.apidata.Response;rc4key=8229225a284731d9bc273bf06ca8b081;rc4Type=2' \
---data '{
-    "open_app": 1,
-    "exist_apps": [],
-    "device": {
-        "device_id": [
-            {
-                "type": 0,
-                "id": "1"
-            }
-        ],
-        "os": 1,
-        "os_version": "",
-        "solution": "",
-        "brand": "",
-        "model": "",
-        "net_type": 0
-    }
-}'
+**Parameter Description**
+> ReqCodec/ResCodec was sequence of codec, split by ";"
+> Codec Format: {CODEC_NAME}:{CODEC_DATA}
+* ReqCodec: request codec, support: pb, rc4, aes, base64, url ...
+* ResCodec: response codec, default is reverse of req_codec
+**For example:**
+```bash
+curl --location --request POST 'http://a.b.c/hello.do' \
+--header 'ReqCodec: aes:{"key":"abc","iv":"def"};base64:{}' \
+--header 'Content-Type: application/json' \
+--data '{....}'
 ```
-
-### 4. Api list
-> default business port is 7001
-1. meta data
-http://{MANAGER_SERVER_ADDR}:7001/st/meta
-2. reload†
-http://{MANAGER_SERVER_ADDR}:7001/do/reload
-2. upload TODO
-http://{MANAGER_SERVER_ADDR}:7001/do/upload
-filed: file=xxxx.proto
 
 ## Reference Project
 * https://github.com/camgraff/protoxy

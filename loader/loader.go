@@ -1,4 +1,4 @@
-package server
+package loader
 
 import (
 	"fmt"
@@ -14,6 +14,31 @@ import (
 	"github.com/jhump/protoreflect/desc/protoparse"
 	"github.com/zzong12/hprotoxy/log"
 )
+
+var localLoader *ProtoDescriptorLoader
+
+// must be called after Load()
+func InitLoader(importPath, loadFolder string, reloadInterval uint16) {
+	localLoader = &ProtoDescriptorLoader{
+		importPath: importPath,
+		loadFolder: loadFolder,
+		parser: &protoparse.Parser{
+			ImportPaths: []string{importPath},
+		},
+		lock:           &sync.RWMutex{},
+		fileDesc:       make([]*desc.FileDescriptor, 0),
+		enumDescMap:    make(map[string]*desc.EnumDescriptor),
+		messageDescMap: make(map[string]*desc.MessageDescriptor),
+		reloadInterval: reloadInterval,
+	}
+}
+
+func GetLocalLoader() *ProtoDescriptorLoader {
+	if localLoader == nil {
+		panic("local loader not initialized")
+	}
+	return localLoader
+}
 
 type ProtoDescriptorLoader struct {
 	importPath     string
@@ -111,6 +136,10 @@ func (p *ProtoDescriptorLoader) Load() error {
 	return nil
 }
 
+func (p *ProtoDescriptorLoader) ListFileDescriptor() []*desc.FileDescriptor {
+	return p.fileDesc
+}
+
 func (p *ProtoDescriptorLoader) AddFile(fileName string, file multipart.File) error {
 	fileContext, _ := ioutil.ReadAll(file)
 	realFilePath := path.Join(p.importPath, p.loadFolder, fileName)
@@ -124,7 +153,7 @@ func (p *ProtoDescriptorLoader) AddFile(fileName string, file multipart.File) er
 	return p.Load()
 }
 
-func (p *ProtoDescriptorLoader) delFile(fileName string) error {
+func (p *ProtoDescriptorLoader) DelFile(fileName string) error {
 	if !strings.HasPrefix(fileName, p.loadFolder) {
 		return fmt.Errorf("invalid file name")
 	}
@@ -135,7 +164,7 @@ func (p *ProtoDescriptorLoader) delFile(fileName string) error {
 	return p.Load()
 }
 
-func (p *ProtoDescriptorLoader) readFile(fileName string) (string, error) {
+func (p *ProtoDescriptorLoader) ReadFile(fileName string) (string, error) {
 	if !strings.HasPrefix(fileName, p.loadFolder) {
 		return "", fmt.Errorf("invalid file name")
 	}
