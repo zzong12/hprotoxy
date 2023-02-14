@@ -134,7 +134,7 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 		data, err := resCodes.DecodeAll(body)
 		if err != nil {
-			return fmt.Errorf("Failed to decode response body: %v", err)
+			return fmt.Errorf("Failed to decode response, body:%v \n%s", err, string(body))
 		}
 
 		buf := bytes.NewBuffer(data)
